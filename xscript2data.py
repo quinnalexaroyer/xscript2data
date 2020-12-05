@@ -25,9 +25,6 @@ bezier_data = {}
 
 class Struct: pass
 
-fout2 = open("/D/home/Blender/notes/print_debug.txt","w")
-fout2.close()
-
 def print_debug(*a):
 	fout2 = open("/D/home/Blender/notes/print_debug.txt","a")
 	fout2.write(" ".join([str(i) for i in a])+"\n")
@@ -1604,7 +1601,7 @@ class DATA_OT_load(bpy.types.Operator):
 		xscript2data(fh,lib_list)
 		return{'FINISHED'}
 
-lib_file = open("/D/home/Blender/python/xscript_libraries.txt","r")
+lib_file = open("xscript_libraries.txt","r") # ********* REPLACE xscript_libraries.txt WITH THE FULL PATH OF THE TEXT FILE THAT CONTAINS LIBRARIES ********
 defaultDir = dict([i.split("=") for i in lib_file.read().split("\n") if "=" in i]).get("directory","")
 setattr(bpy.types.Scene, "file", bpy.props.StringProperty(name="file", default=""))
 setattr(bpy.types.Scene, "directory", bpy.props.StringProperty(name="directory", default=defaultDir))
