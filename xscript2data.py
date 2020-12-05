@@ -23,11 +23,13 @@ errors_list = []
 warnings_list = []
 bezier_data = {}
 
-fout2 = open("print_debug.txt","w")
+class Struct: pass
+
+fout2 = open("/D/home/Blender/notes/print_debug.txt","w")
 fout2.close()
 
 def print_debug(*a):
-	fout2 = open("print_debug.txt","a")
+	fout2 = open("/D/home/Blender/notes/print_debug.txt","a")
 	fout2.write(" ".join([str(i) for i in a])+"\n")
 	fout2.close()
 
@@ -271,9 +273,12 @@ def act(a,e): # a = XML element; e = extra information (dictionary)
 	else:
 		errors_list.append("act tag without 'a' attribute")
 	if "f" in a.attrib:
-		[f1,f2] = a.attrib["f"].split(",")
+		if "," in a.attrib["f"]:
+			[f1,f2] = a.attrib["f"].split(",")
+		else:
+			errors_list.append("'f' attribute of 'act' tag with one value  %s" % (" ".join([a.attrib["f"], action, actor]),))
 	else:
-		errors_list.append("act tag without 'f' attribute")
+		errors_list.append("act tag without 'f' attribute  %s" % (" ".join([action, actor]),))
 	if "hold" in a.attrib:
 		if a.attrib["hold"] == "forward":
 			hold = 1
@@ -291,10 +296,12 @@ def act(a,e): # a = XML element; e = extra information (dictionary)
 	else:
 		arm = bpy.data.objects[actor]
 	arm0 = arm.data
-	if action in bpy.data.actions:
+	if action in bpy.data.actions and f1 != "" and f2 != "":
 		action2 = bpy.data.actions[action]
 		fn1 = calc_linenum(f1,linenum)
 		fn2 = calc_linenum(f2,linenum)
+		if arm.animation_data is None:
+			arm.animation_data_create()
 		nla = arm.animation_data.nla_tracks
 		track = nla.new()
 		track.name = action
@@ -652,7 +659,7 @@ def multi(a,e):
 				j.attrib["f"] = k
 				make_data(j,e2)
 
-def parent(a):
+def parent(a): # processes 'parent' xml tag
 	global errors_list
 	parent = ""
 	child = ""
@@ -668,7 +675,25 @@ def parent(a):
 	c_ob = bpy.data.objects[child]
 	c_ob.parent = p_ob
 
-def constraint(a):
+def make_childof_constraint(obj, parent_obj, name):
+	constr = obj.constraints.new("CHILD_OF")
+	constr.name = name
+	constr.target = parent_obj
+	return constr
+
+def set_parent(obj, parent_obj):
+	obj.parent = parent_obj
+
+def prepare_parent(obj, parent_obj):
+	obj.location = (0.0, 0.0, 0.0)
+	obj.rotation_euler = (0.0, 0.0, 0.0)
+	set_parent(obj, parent_obj)
+
+def prepare_parent_if_none(obj, parent_obj):
+	if obj.parent is None:
+		prepare_parent(obj, parent_obj)
+
+def constraint(a): # processes 'constraint' xml tag
 	global errors_list
 	if "type" in a.attrib:
 		constr = None
@@ -1132,29 +1157,29 @@ def get_props(t,theType):
 				errors_list.append("prop without a name or group")
 	return (prop_list, group_list)
 
-def get_new_object(newobjlist,to_load,extension,cname):
-	j = -1
-	n = len(to_load[0]["name"])
-	obW = None
-	while -j <= len(newobjlist):
-		if newobjlist[j].name[:n] == to_load[0]["name"]:
-			obW = newobjlist[j]
-			obW.name = cname + "." + extension
-			j = -len(newobjlist)
-		j -= 1
-	return obW
+def deselect_context_objects():
+	for o in bpy.context.selected_objects:
+		o.select_set(state=False)
+
+def format_object_name(obj, cname, extension):
+	obj.name = cname + "." + extension
+
+def get_object_named(name, objlist):
+	for i in objlist:
+		if i.name == name:
+			return i
 
 def set_modifier_targets(recently_loaded,arm,face):
 	for i in recently_loaded:
 		if type(i.data) == bpy.types.Mesh:
 			for j in i.modifiers:
 				if j.type == "HOOK":
-					if "arm" in j.object.name.lower():
+					if j.object is None or "arm" in j.object.name.lower():
 						j.object = arm
 					elif "face" in j.object.name.lower():
 						j.object = face
 				if j.type == "ARMATURE":
-					if "arm" in j.object.name.lower():
+					if j.object is None or "arm" in j.object.name.lower():
 						j.object = arm
 					elif "face" in j.object.name.lower():
 						j.object = face
@@ -1163,7 +1188,7 @@ def set_modifier_targets(recently_loaded,arm,face):
 					rest = name[name.find(".")+1:]
 					j.object = bpy.data.objects[i.name.split(".")[0]+"."+rest]
 
-def make_piece_modifiers(pieceOb,name):
+def make_piece_modifiers(pieceOb, name):
 	charOb = bpy.data.objects[name + ".head"]
 	for i in charOb.modifiers:
 		if hasattr(i,"vertex_group") and getattr(i,"vertex_group") in [j.name for j in pieceOb.vertex_groups]:
@@ -1171,186 +1196,108 @@ def make_piece_modifiers(pieceOb,name):
 			for j in ("object","subtarget","vertex_group"):
 				if hasattr(newMod,j):
 					setattr(newMod,j,getattr(i,j))
-	bpy.context.scene.objects.active = pieceOb
-	while pieceOb.modifiers.find("Subsurf") != len(pieceOb.modifiers)-1:
-		bpy.ops.object.modifier_move_down(modifier="Subsurf")
-	while pieceOb.modifiers.find("Armature") != len(pieceOb.modifiers)-2:
+				print("PIECE MODIFIERS 1", newMod, i, j, getattr(i,j))
+	bpy.context.view_layer.objects.active = pieceOb
+	print([i.name for i in pieceOb.modifiers])
+	while pieceOb.modifiers.find("Subdivision") not in (len(pieceOb.modifiers)-1, -1):
+		bpy.ops.object.modifier_move_down(modifier="Subdivision")
+		#print("PIECE MODIFIERS MOVE SUBSURF")
+	while pieceOb.modifiers.find("Armature") not in (len(pieceOb.modifiers)-2, -2):
 		bpy.ops.object.modifier_move_down(modifier="Armature")
+		#print("PIECE MODIFIERS MOVE ARMATURE")
 
-def load_data(cfile,afile,ffile,pfile,characters_list,act_list,face_list):
-	global unfound_actions, unfound_face_actions, errors_list
-	scn = bpy.context.scene
-	x = 0.0
-	print_debug("G",characters_list)
-	print("LOAD DATA 1")
-	for c in characters_list:
-		print("LOAD DATA 2", c)
-		print_debug("B"+str(c))
-		recently_loaded = []
-		keep_loaded = []
-		reset_pieces = []
-		arm = ""
-		face = ""
-		head = ""
-		height = 8
-		if "height" in c:
-			height = float(c["height"])
-		bpy.ops.object.add(type="EMPTY",location=(x,0.0,-10.0),rotation=(0.0,0.0,0.0))
-		e = bpy.context.object
-		e.name = c["name"]
-		e.scale = (height/8,height/8,height/8)
-		for o in bpy.context.selected_objects:
-			o.select_set(state=False)
-		if "group" in c:
-			print_debug("C")
-			bpy.ops.wm.append(filename=c["group"],directory=cfile+"\\Group\\")
-			recently_loaded.extend(bpy.context.selected_objects)
-			keep_loaded.extend(bpy.context.selected_objects)
-			j = -1
-			print_debug("H",[(o.name,o.type) for o in bpy.context.selected_objects])
-			while -j <= len(bpy.context.selected_objects):
-				if bpy.context.selected_objects[j].type == "ARMATURE":
-					print_debug("I1",bpy.context.selected_objects[j],bpy.context.selected_objects[j].type)
-					if name_wo_num(bpy.context.selected_objects[j].name)[-4:] == ".arm":
-						print_debug("I2",name_wo_num(bpy.context.selected_objects[j].name))
-						arm = bpy.context.selected_objects[j]
-					elif name_wo_num(bpy.context.selected_objects[j].name)[-5:] == ".face":
-						print_debug("I3",name_wo_num(bpy.context.selected_objects[j].name))
-						face = bpy.context.selected_objects[j]
-				elif name_wo_num(bpy.context.selected_objects[j].name) == c["group"]:
-					head = bpy.context.selected_objects[j]
-					head.name = c["group"]+".head"
-				j -= 1
-			j = -1
-			print_debug("F"+str(head)+str(arm)+str(face))
-			head_co = (head.location[0],head.location[1],head.location[2])
-			print_debug("J",head_co)
-			while -j <= len(bpy.context.selected_objects):
-				o = bpy.context.selected_objects[j]
-				if o.parent is None:
-					print_debug("K1",j,o.name,o.location)
-					o.location = (o.location[0]-head_co[0],o.location[1]-head_co[1],o.location[2]-head_co[2])
-					print_debug("K2",j,o.name,o.location)
-					o.parent = e
-				j -= 1
+def reset_hooks(obj):
+	bpy.context.view_layer.objects.active = obj
+	if obj.type == "MESH":
+		bpy.ops.object.mode_set(mode="EDIT")
+		for m in obj.modifiers:
+			if m.type == "HOOK":
+				bpy.ops.object.hook_reset(modifier=m.name)
+		bpy.ops.object.mode_set(mode="OBJECT")
+
+def get_objects_to_load(filename, objects_to_find):
+	# http://blenderartists.org/forum/showthread.php?248493-Loading-Libraries
+	objects_to_load = []
+	with bpy.data.libraries.load(filename) as (src, _):
+		try:
+			for obj in src.objects:
+				results = [{'name':obj} for obj in src.objects]
+		except UnicodeDecodeError as detail:
+			print(detail)
+		for obj in results:
+			if obj.get('name') in objects_to_find:
+				objects_to_load.append(obj)
+			elif wildcard_match_list(obj["name"],objects_to_find):
+				objects_to_load.append(obj)
+	return objects_to_load
+
+def load_objects(filename, objects_to_find):
+	print("LOAD OBJECTS FUNCTION", filename, objects_to_find)
+	obj_list = get_objects_to_load(filename, objects_to_find)
+	print("OBJ_LIST = ", obj_list)
+	if obj_list != []:
+		bpy.ops.wm.append(directory=filename + '/Object/', autoselect=True, files=obj_list)
+	return bpy.context.selected_objects
+
+def make_armature_modifier(piece_data, main_object, arm): #if "with" not in c["piece"][i][2] or c["piece"][i][2]["with"] == "reset":
+	print("PIECE DATA", piece_data, main_object, arm)
+	if "with" not in piece_data[2] or piece_data[2] == "reset":
+		if len([k for k in main_object.modifiers if k.type == "ARMATURE"]) == 0:
+			mod = main_object.modifiers.new("Armature","ARMATURE")
+			mod.object = arm
 		else:
-			print_debug("D")
-			for i in [ ["head",cfile] , ["arm",cfile] , ["face",cfile] ]:
-				if not((i[0] == "arm" and arm != "") or (i[0] == "face" and face != "")):
-					obW = ""
-					to_load = []
-					with bpy.data.libraries.load(i[1]) as (src, _):
-						try:
-							for obj in src.objects:
-								file_objs = [{'name':obj} for obj in src.objects]
-						except UnicodeDecodeError as detail:
-							print(detail)
-						for j in file_objs:
-							if i[0] in c and c[i[0]] in j.values():
-								to_load.append(j)
-					if to_load != []:
-						bpy.ops.wm.append(directory=i[1]+'/Object/', autoselect=True, files=to_load)
-						n = len(to_load[0]["name"])
-						recently_loaded.extend(bpy.context.selected_objects)
-						obW = get_new_object(bpy.context.selected_objects,to_load,i[0],c["name"])
-						if obW is None:
-							obW = get_new_object(bpy.data.objects,to_load,i[0],c["name"])
-						if obW is not None:
-							keep_loaded.append(obW)
-							if obW.animation_data != None:
-								obW.animation_data.action = None
-							constr = obW.constraints.new("CHILD_OF")
-							constr.name = "ChildOfEmpty"
-							constr.target = e
-							obW.location = (0.0,0.0,0.0)
-							obW.rotation_euler = (0.0,0.0,0.0)
-							if i[0] == "arm":
-								arm = obW
-							elif i[0] == "face":
-								face = obW
-							elif i[0] == "head":
-								head = obW
-								j = -1
-								while -j <= len(bpy.context.selected_objects):
-									if bpy.context.selected_objects[j].type == "ARMATURE":
-										for m in obW.modifiers:
-											if m.type == "ARMATURE" and m.object == bpy.context.selected_objects[j]:
-												if bpy.context.selected_objects[j].location[2] == 0:
-													arm = bpy.context.selected_objects[j]
-													keep_loaded.append(arm)
-												elif bpy.context.selected_objects[j].location[2] == 7:
-													face = bpy.context.selected_objects[j]
-													keep_loaded.append(arm)
-									j -= 1
-						else:
-							errors_list.append("Error: Object named "+str(c.get(i[0]))+" was not found")
-			set_modifier_targets(recently_loaded,arm,face)
-		for o in bpy.context.selected_objects:
-			o.select_set(state=False)
-		to_load = []
-		file_objs = []
-		with bpy.data.libraries.load(pfile) as (src, _):
-			try:
-				for obj in src.objects:
-					file_objs = [{'name':obj} for obj in src.objects]
-			except UnicodeDecodeError as detail:
-				print(detail)
-			for i in c["piece"].keys(): # PIECES
-				for j in file_objs:
-					if c["piece"][i][0] in j.values():
-						bpy.ops.wm.append(directory=pfile+'/Object/', autoselect=True, files=[j])
-						obW = get_new_object(bpy.context.selected_objects,[j],i,c["name"])
-						keep_loaded.append(obW)
-						recently_loaded.extend(bpy.context.selected_objects)
-						constr = obW.constraints.new("CHILD_OF")
-						constr.name = "ChildOfEmpty"
-						constr.target = e
-						recently_loaded.append(obW)
-						obW.location = (0.0,0.0,0.0)
-						obW.rotation_euler = (0.0,0.0,0.0)
-						if "with" not in c["piece"][i][2] or c["piece"][i][2]["with"] == "reset":
-							reset_pieces.extend(bpy.context.selected_objects)
-							if len([k for k in obW.modifiers if k.type == "ARMATURE"]) == 0:
-								mod = obW.modifiers.new("Armature","ARMATURE")
-								mod.object = arm
-							else:
-								for l in [k for k in obW.modifiers if k.type == "ARMATURE"]:
-									l.object = arm
-						if "with" not in c["piece"][i][2] or c["piece"][i][2]["with"] != "keep":
-							keep_loaded.append(bpy.context.selected_objects)
-						for k in c["piece"][i][1]:
-							bpy.ops.wm.append(directory=pfile+'/Material/', files=[{"name":k[1]}])
-							obW.data.materials[int(k[0])] = bpy.data.materials[k[1]]
-						make_piece_modifiers(obW,c["name"])
-						for o in bpy.context.selected_objects:
-							o.select_set(state=False)
-			set_modifier_targets(reset_pieces,arm,face)
-		if head != "":
-			align_eye_bones(arm,head)
-		for i in recently_loaded: # Reset all hook modifiers
-			bpy.context.scene.objects.active = i
-			if i.type == "MESH":
-				bpy.ops.object.mode_set(mode="EDIT")
-				for m in i.modifiers:
-					if m.type == "HOOK":
-						bpy.ops.object.hook_reset(modifier=m.name)
-				bpy.ops.object.mode_set(mode="OBJECT")
-		x += 2.0
-		for o in bpy.context.selected_objects:
-			o.select_set(state=False)
-	# Delete extra objects
-	to_delete = []
-	for i in recently_loaded:
-		if i not in keep_loaded:
-			to_delete.append(i)
-	print(to_delete)
-	print(recently_loaded)
-	print(keep_loaded)
-	for o in bpy.context.selected_objects:
-		o.select_set(state=False)
-	for i in to_delete:
-		i.select_set(state=True)
-	bpy.ops.object.delete()
+			for i in [k for k in main_object.modifiers if k.type == "ARMATURE"]:
+				i.object = arm
+
+def get_main_pieces(objlist, name):
+	j = -1
+	arm = None; face = None; head = None
+	while -j <= len(objlist):
+		if objlist[j].type == "ARMATURE":
+			if name_wo_num(objlist[j].name)[-4:] == ".arm":
+				arm = objlist[j]
+			elif name_wo_num(objlist[j].name)[-5:] == ".face":
+				face = objlist[j]
+		elif name_wo_num(objlist[j].name) == name:
+			head = objlist[j]
+			head.name = name + ".head"
+		j -= 1
+	return (head, arm, face)
+
+def load_group(groupName, filePath):
+	bpy.ops.wm.append(filename=groupName, directory=filePath+"/Collection/")
+
+def make_empty_for_character(name, height, x):
+	bpy.ops.object.add(type="EMPTY", location=(x,0.0,-10.0), rotation=(0.0,0.0,0.0))
+	empty = bpy.context.object
+	empty.name = name
+	empty.scale = (height/8, height/8, height/8)
+	return empty
+
+def find_piece_key(c, name):
+	for i in c["piece"]:
+		if name == name_wo_num(name) and name_wo_num(c["piece"][i][0]) == name:
+			return i
+
+def load_pieces_for_character(c, pfile, arm, empty):
+	new_objects = load_objects(pfile, [c["piece"][i][0] for i in c["piece"]])
+	print("LOAD PIECES FOR CHARACTER", new_objects, type(new_objects))
+	for o in new_objects:
+		i = find_piece_key(c, o.name)
+		print("object", i, o.name)
+		if i is not None:
+			o.name = c["name"] + "." + i
+			prepare_parent_if_none(o, empty)
+			print("LINE 1291", i, o.name, c)
+			make_armature_modifier(c["piece"][i], o, arm)
+			for k in c["piece"][i][1]:
+				bpy.ops.wm.append(directory=pfile+'/Material/', files=[{"name":k[1]}])
+				o.data.materials[int(k[0])] = bpy.data.materials[k[1]]
+			make_piece_modifiers(o, c["name"])
+	deselect_context_objects()
+	return new_objects
+
+def load_actions(afile, ffile, act_list, face_list):
 	with bpy.data.libraries.load(afile) as (src, _):
 		actlist = []
 		try:
@@ -1380,6 +1327,71 @@ def load_data(cfile,afile,ffile,pfile,characters_list,act_list,face_list):
 	for i in face_list:
 		if not(i in all_action_names):
 			unfound_face_actions.append(i)
+
+def add_to_collection(obj, collection_name):
+	if collection_name in bpy.data.collections:
+		if obj.name not in bpy.data.collections[collection_name].all_objects:
+			bpy.data.collections[collection_name].objects.link(obj)
+
+def load_objects_from_data(cfile,pfile,characters_list):
+	global unfound_actions, unfound_face_actions, errors_list
+	scn = bpy.context.scene
+	x = 0.0 # x-coordinate where object will be placed in the scene (overridden by location keyframes)
+	print("BEGIN LOADING DATA")
+	for c in characters_list: # each 'c' is a dictionary of character data
+		# keys in 'c' could be: 'name', 'group', 'height', 'piece'
+		# If the key is 'piece' its value is a dictionary
+		# Keys 'group' and 'name' are string values; 'height' is float value
+		print("LOADING DATA FOR CHARACTER", c)
+		recently_loaded = []; keep_loaded = []; reset_pieces = []; file_objs = []
+		arm = None; face = None; head = None
+		height = float(c["height"]) if "height" in c else 8
+		name = c["name"]
+		empty = make_empty_for_character(name, height, x)
+		deselect_context_objects()
+		if "group" in c:
+			load_group(c["group"], cfile)
+			recently_loaded.extend(bpy.context.selected_objects)
+			keep_loaded.extend(bpy.context.selected_objects)
+			(head, arm, face) = get_main_pieces(bpy.context.selected_objects, c["group"])
+			for o in bpy.context.selected_objects:
+				if o.parent is None:
+					prepare_parent(o, empty)
+				add_to_collection(o, name)
+		else:
+			new_objects = load_objects(cfile, [name, name+".arm", name+".face"]).objects
+			keep_loaded.extend(new_objects)
+			if new_objects == []:
+				errors_list.append("Error: Object named " + str(c.get(i[0])) + " was not found")
+			else:
+				for i in new_objects:
+					prepare_parent(i, empty)
+					add_to_collection(i, name)
+				(head, arm, face) = get_main_pieces(new_objects, name)
+				set_modifier_targets(recently_loaded, arm, face)
+		add_to_collection(empty, name)
+		deselect_context_objects()
+		pieces = load_pieces_for_character(c, pfile, arm, empty)
+		set_modifier_targets(pieces, arm, face)
+		recently_loaded.extend(pieces)
+		keep_loaded.extend(pieces)
+		if head is not None and arm is not None:
+			align_eye_bones(arm,head)
+		for i in recently_loaded:
+			reset_hooks(i)
+		x += 2.0
+		deselect_context_objects()
+	# Delete extra objects
+	to_delete = []
+	for i in recently_loaded:
+		if i not in keep_loaded:
+			to_delete.append(i)
+	print("RECENTLY LOADED", recently_loaded)
+	print("TO KEEP", keep_loaded)
+	print("TO DELETE", to_delete)
+	for i in to_delete:
+		i.select_set(state=True)
+	bpy.ops.object.delete()
 
 def copy_drivers(new_object,object_name,file,armature):
 	with bpy.data.libraries.load(file) as (lister,getter):
@@ -1422,7 +1434,7 @@ def align_eye_bones(arm,head):
 	left_top0 = head0.vertices[left_top].co
 	left_bottom0 = head0.vertices[left_bottom].co
 	left_center0 = head0.vertices[left_center].co
-	bpy.context.scene.objects.active = arm
+	bpy.context.view_layer.objects.active = arm
 	bpy.ops.object.mode_set(mode='EDIT')
 	head_tail = arm0.edit_bones["Head"].tail
 	arm0.edit_bones["Eye.L"].use_local_location = True
@@ -1446,29 +1458,12 @@ def get_vertices_from_group(a,index):
 				vlist.append(v.index)
 	return vlist
 
-def load_objects(filename,obj_list):
-	# http://blenderartists.org/forum/showthread.php?248493-Loading-Libraries
-	objlist = []
-	with bpy.data.libraries.load(filename) as (src, _):
-		try:
-			for obj in src.objects:
-				temp_dic = [{'name':obj} for obj in src.objects]
-		except UnicodeDecodeError as detail:
-			print(detail)
-		for obj in temp_dic:
-			if obj.get('name') in obj_list:
-				objlist.append(obj)
-			elif wildcard_match_list(obj["name"],obj_list):
-				objlist.append(obj)
-	if objlist != []:
-		bpy.ops.wm.append(directory=filename + '/Object/', autoselect=True, files=objlist)
-
 def load_object_groups(filename, groupList):
 	print_debug("GROUP LIST" + str(groupList))
 	print_debug("filename:", filename)
 	for i in groupList:
 		print_debug("load group iteration", i)
-		bpy.ops.wm.append(directory=filename+"\\Group\\", filename=i)
+		bpy.ops.wm.append(directory=filename+"/Collection/", filename=i)
 		print_debug("GROUP LIST 2", [i.name for i in bpy.data.objects])
 
 def wildcard_match_list(o,l):
@@ -1547,13 +1542,18 @@ def xscript2data(f,l):
 	theProps = get_props(x,"props")
 	bgProps = get_props(x,"background")
 	load_objects(l[3],theProps[0])
+	print_debug("load_objects(l[3],theProps[0])", l[3], theProps[0])
 	load_objects(l[4],bgProps[0])
+	print_debug("load_objects(l[4],bgProps[0])", l[4], bgProps[0])
 	load_object_groups(l[3],theProps[1])
+	print_debug("load_object_groups(l[3],theProps[1])", l[3],theProps[1])
 	load_object_groups(l[4],bgProps[1])
 	print_debug("AFTER LOAD PROPS")
+	print_debug("load_object_groups(l[4],bgProps[1])", l[4], bgProps[1])
 	print_debug(theProps)
 	print_debug(bgProps)
-	load_data(l[0],l[1],l[2],l[5],character_data,act_list,face_list)
+	load_objects_from_data(l[0],l[5],character_data)
+	load_actions(l[1],l[2], act_list, face_list)
 	make_data(x.getroot(),{})
 	key_loc()
 	key_rot()
@@ -1579,7 +1579,8 @@ def loadLibraries():
 				lib[lib_order[j[0]]] = j[1].strip()
 	return lib
 
-class DataPanel(bpy.types.Panel):
+class PANEL_PT_xscriptpanel(bpy.types.Panel):
+	bl_idname = "PANEL_PT_xscriptpanel"
 	bl_label = "xscript"
 	bl_space_type = "VIEW_3D"
 	bl_region_type = "UI"
@@ -1608,6 +1609,6 @@ defaultDir = dict([i.split("=") for i in lib_file.read().split("\n") if "=" in i
 setattr(bpy.types.Scene, "file", bpy.props.StringProperty(name="file", default=""))
 setattr(bpy.types.Scene, "directory", bpy.props.StringProperty(name="directory", default=defaultDir))
 bpy.utils.register_class(DATA_OT_load)
-bpy.utils.register_class(DataPanel)
+bpy.utils.register_class(PANEL_PT_xscriptpanel)
 
 lib_list = loadLibraries()
