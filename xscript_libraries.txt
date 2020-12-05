@@ -1,0 +1,7 @@
+directory=/path/to/directory
+characters=/path/to/file.blend
+actions=/path/to/file.blend
+face=/path/to/file.blend
+props=/path/to/file.blend
+background=/path/to/file.blend
+clothes=/path/to/file.blend
